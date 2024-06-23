@@ -1,0 +1,372 @@
+library(openxlsx)
+library(shiny)
+library(ggplot2)
+library(ggvis)
+library(lubridate)
+library(shinyjs)
+
+wyzn_pkt_zw_splinem <- function(y)
+{
+  y <- as.double(y)
+  
+  idx_bez_NA <- which(!(is.na(y)))
+  
+  y <- y[idx_bez_NA]
+  
+  spl_y <- smooth.spline(y, df = 30) 
+  
+  diff_spl_y <- diff(spl_y$y, d = 1)
+  
+  pkt_zw <- c()
+  
+  diff_tr <- diff_spl_y
+  
+  for(i in 2:(length(diff_tr) - 1))
+  {
+    if(diff_tr[i - 1] > 0 & diff_tr[i] < 0)
+    {
+      # Sprawdzam, czy na pewno oryginalny szereg czasowy ma w punkcie t ekstremum lokalne. Jesli nie ma, to biore wartosc w t - 1 lub t + 1.
+      nowy_pkt_zw <- which(c(y[i - 1], y[i], y[i + 1]) == max(c(y[i - 1], y[i], y[i + 1]))) + (i - 2)
+      # Gdy dla i = 10, which.min daje nam 2, to powinnismy dostac 10 a nie 2, czyli
+      # przesuwam which.min o (i - 2)
+      
+      # Gdy wszystkie wartosci sa sobie rowne, to biore najpozniejsza.
+      nowy_pkt_zw <- nowy_pkt_zw[length(nowy_pkt_zw)] 
+      
+      pkt_zw <- append(pkt_zw, nowy_pkt_zw)
+    }
+    
+    if(diff_tr[i - 1] < 0 & diff_tr[i] > 0)
+    {
+      # Sprawdzam, czy na pewno oryginalny szereg czasowy ma w punkcie t ekstremum lokalne. Jesli nie ma, to biore wartosc w t - 1 lub t + 1.
+      nowy_pkt_zw <- which(c(y[i - 1], y[i], y[i + 1]) == min(c(y[i - 1], y[i], y[i + 1]))) + (i - 2)
+      # Gdy dla i = 10, which.min daje nam 2, to powinnismy dostac 10 a nie 2, czyli
+      # przesuwam which.min o (i - 2)
+      
+      # Gdy wszystkie wartosci sa sobie rowne, to biore najpozniejsza.
+      nowy_pkt_zw <- nowy_pkt_zw[length(nowy_pkt_zw)] 
+      
+      pkt_zw <- append(pkt_zw, nowy_pkt_zw)
+    }
+  }
+  
+  return(list("spline" = spl_y, "pkt_zw" = pkt_zw, "idx_bez_NA" = idx_bez_NA))
+}
+
+
+
+
+
+
+
+metoda_katowa <- function(y)
+{
+  y <- as.double(y)
+  
+  idx_bez_NA <- which(!(is.na(y)))
+  
+  y <- y[idx_bez_NA]
+  
+  x <- 1:length(y)
+  
+  x <- scale(x)
+  
+  if(length(unique(y)) > 1)
+  {
+    y <- scale(y)
+  }
+  
+  katy_w_rad <- rep(NA, length(x) - 2)
+  
+  for(i in 3:length(x))
+  {
+    cosinus <- ((x[i - 1] - x[i - 2]) * (x[i] - x[i - 1]) + (y[i - 1] - y[i - 2]) * (y[i] - y[i - 1])) / (sqrt((x[i - 1] - x[i - 2])^2 + (y[i - 1] - y[i - 2])^2) * sqrt((x[i] - x[i - 1])^2 + (y[i] - y[i - 1])^2))
+    
+    if(cosinus > 1)
+    {
+      cosinus <- 1
+    }
+    
+    if(cosinus < -1)
+    {
+      cosinus <- -1
+    }
+    
+    katy_w_rad[i - 2] <- acos(cosinus)
+  }
+  
+  
+  
+  x_pkt_zw <- c()
+  
+  for(i in 1:length(katy_w_rad))
+  {
+    if(katy_w_rad[i] >= pi/5)
+    {
+      x_pkt_zw <- append(x_pkt_zw, i + 1)
+    }
+  }
+  
+  return(list("pkt_zw" = x_pkt_zw, "idx_bez_NA" = idx_bez_NA))
+}
+
+
+
+
+wyzn_pkt_zw_splinem_z_poprawka <- function(y, odl_pkt)
+{
+  y <- as.double(y)
+  
+  idx_bez_NA <- which(!(is.na(y)))
+  
+  y <- y[idx_bez_NA]
+  
+  spl_y <- smooth.spline(y, df = 30)
+  
+  diff_spl_y <- diff(spl_y$y, d = 1)
+  
+  pkt_zw <- c()
+  
+  diff_tr <- diff_spl_y
+  
+  bliskosc <- 0
+  
+  odleglosc <- 0
+  
+  for(i in 2:(length(diff_tr) - 1))
+  {
+    if(length(pkt_zw) > 0)
+    {
+      odleglosc <- odleglosc + 1
+    }
+    if(odleglosc > odl_pkt)
+    {
+      bliskosc <- 0
+    }
+    if(diff_tr[i - 1] > 0 & diff_tr[i] < 0)
+    {
+      bliskosc <- bliskosc + 1
+      if(odleglosc <= odl_pkt)
+      {
+        if(bliskosc %% 2 == 0)
+        {
+          odleglosc <- 0
+          bliskosc <- 0
+          pkt_zw <- setdiff(pkt_zw, pkt_zw[length(pkt_zw)])
+          next
+        }
+      }
+      odleglosc <- 0
+      # Sprawdzam, czy na pewno oryginalny szereg czasowy ma w punkcie t ekstremum lokalne. Jesli nie ma, to biore wartosc w t - 1 lub t + 1.
+      nowy_pkt_zw <- which(c(y[i - 1], y[i], y[i + 1]) == max(c(y[i - 1], y[i], y[i + 1]))) + (i - 2)
+      # Gdy dla i = 10, which.min daje nam 2, to powinnismy dostac 10 a nie 2, czyli
+      # przesuwam which.min o (i - 2)
+      
+      # Gdy wszystkie wartosci sa sobie rowne, to biore najpozniejsza.
+      nowy_pkt_zw <- nowy_pkt_zw[length(nowy_pkt_zw)] 
+      
+      pkt_zw <- append(pkt_zw, nowy_pkt_zw)
+    }
+    
+    if(diff_tr[i - 1] < 0 & diff_tr[i] > 0)
+    {
+      bliskosc <- bliskosc + 1
+      if(odleglosc <= odl_pkt)
+      {
+        if(bliskosc %% 2 == 0)
+        {
+          odleglosc <- 0
+          bliskosc <- 0
+          
+          
+          pkt_zw <- setdiff(pkt_zw, pkt_zw[length(pkt_zw)])
+          next
+        }
+      }
+      odleglosc <- 0
+      # Sprawdzam, czy na pewno oryginalny szereg czasowy ma w punkcie t ekstremum lokalne. Jesli nie ma, to biore wartosc w t - 1 lub t + 1.
+      nowy_pkt_zw <- which(c(y[i - 1], y[i], y[i + 1]) == min(c(y[i - 1], y[i], y[i + 1]))) + (i - 2)
+      # Gdy dla i = 10, which.min daje nam 2, to powinnismy dostac 10 a nie 2, czyli
+      # przesuwam which.min o (i - 2)
+      
+      # Gdy wszystkie wartosci sa sobie rowne, to biore najpozniejsza.
+      nowy_pkt_zw <- nowy_pkt_zw[length(nowy_pkt_zw)] 
+      
+      pkt_zw <- append(pkt_zw, nowy_pkt_zw)
+    }
+  }
+  
+  return(list("spline" = spl_y, "pkt_zw" = pkt_zw, "idx_bez_NA" = idx_bez_NA))
+}
+
+
+
+
+
+
+podaj_pkty_zwrotne <- function(dane, algorytm)
+{
+  daty <- as.Date(dane[,1], origin = "1899-12-30")
+  
+  if(algorytm == "Metoda kątowa")
+  {
+    
+    
+
+    
+    for(i in 2:2) # Tymczasowo dziala dla wersji z 1 zmienna.
+    {
+      wyniczek <- metoda_katowa(dane[, i])
+      
+      
+      
+      y <- dane[, i]
+      
+      y <- as.double(y)
+      
+      y <- y[which(!(is.na(y)))]
+      
+      
+      
+      dane_do_narysowania_wykresu <- data.frame(zm_x = daty[wyniczek$idx_bez_NA], zm_y = y)
+      
+
+      
+      czy_pkt_zw_kolor <- rep(rgb(0, 101, 177, maxColorValue = 255), length(y))
+      czy_pkt_zw_kolor[wyniczek$pkt_zw] <- rgb(233, 10, 10, maxColorValue = 255)
+      czy_pkt_zw_rozmiar <- rep(20, length(y))
+      czy_pkt_zw_rozmiar[wyniczek$pkt_zw] <- 100
+      
+      add_title <- function(vis, ..., x_lab = "x units", title = paste0("Metoda kątowa dla ", names(dane)[i])) 
+      {
+        add_axis(vis, "x", title = x_lab) %>% 
+          add_axis("x", orient = "top", ticks = 0, title = title,
+                   properties = axis_props(
+                     axis = list(stroke = "white"),
+                     labels = list(fontSize = 0)
+                   ), ...)
+      }
+      
+             
+      
+    }
+    
+    
+    
+    
+    
+    
+    tabela_z_punktami_zwrotnymi <- data.frame("Punkty zwrotne" = as.character(daty[wyniczek$idx_bez_NA][wyniczek$pkt_zw]))
+    
+    return(list(dane_do_narysowania_wykresu = dane_do_narysowania_wykresu, czy_pkt_zw_kolor = czy_pkt_zw_kolor, czy_pkt_zw_rozmiar = czy_pkt_zw_rozmiar,
+                tabela_z_punktami_zwrotnymi = tabela_z_punktami_zwrotnymi))
+  }
+  
+  
+  
+  if(algorytm == "Spline")
+  {
+    
+    
+
+    
+    for(i in 2:2) # Tymczasowo dziala dla wersji z 1 zmienna.
+    {
+      wyniczek <- wyzn_pkt_zw_splinem(dane[, i])
+      
+      
+      
+      y <- dane[, i]
+      
+      y <- as.double(y)
+      
+      y <- y[which(!(is.na(y)))]
+      
+      czy_pkt_zw_kolor <- rep(rgb(0, 101, 177, maxColorValue = 255), length(y))
+      czy_pkt_zw_kolor[wyniczek$pkt_zw] <- rgb(233, 10, 10, maxColorValue = 255)
+      czy_pkt_zw_rozmiar <- rep(20, length(y))
+      czy_pkt_zw_rozmiar[wyniczek$pkt_zw] <- 100
+      
+      add_title <- function(vis, ..., x_lab = "x units", title = paste0("Spline dla ", names(dane)[i])) 
+      {
+        add_axis(vis, "x", title = x_lab) %>% 
+          add_axis("x", orient = "top", ticks = 0, title = title,
+                   properties = axis_props(
+                     axis = list(stroke = "white"),
+                     labels = list(fontSize = 0)
+                   ), ...)
+      }
+      
+      dane_do_narysowania_wykresu <- data.frame(zm_x = daty[wyniczek$idx_bez_NA], zm_y = y)
+      
+      
+      
+    }
+    
+    tabela_z_punktami_zwrotnymi <- data.frame("Punkty zwrotne" = as.character(daty[wyniczek$idx_bez_NA][wyniczek$pkt_zw]))
+    
+    return(list(dane_do_narysowania_wykresu = dane_do_narysowania_wykresu, czy_pkt_zw_kolor = czy_pkt_zw_kolor, czy_pkt_zw_rozmiar = czy_pkt_zw_rozmiar,
+                tabela_z_punktami_zwrotnymi = tabela_z_punktami_zwrotnymi))
+  }
+  
+  
+  
+  if(algorytm == "Spline z poprawką")
+  {
+    ramka_danych <- matrix(NA, nrow = nrow(dane) + 1, ncol = ncol(dane) - 1)
+    
+    ramka_danych[1, ] <- names(dane)[2:ncol(dane)]
+    
+
+    
+    for(i in 2:2) # Tymczasowo dziala dla wersji z 1 zmienna.
+    {
+      wyniczek <- wyzn_pkt_zw_splinem_z_poprawka(dane[, i], floor(length(dane[, i]) / 25))
+      
+      
+      
+      
+      
+      y <- dane[, i]
+      
+      y <- as.double(y)
+      
+      y <- y[which(!(is.na(y)))]
+      
+      czy_pkt_zw_kolor <- rep(rgb(0, 101, 177, maxColorValue = 255), length(y))
+      czy_pkt_zw_kolor[wyniczek$pkt_zw] <- rgb(233, 10, 10, maxColorValue = 255)
+      czy_pkt_zw_rozmiar <- rep(20, length(y))
+      czy_pkt_zw_rozmiar[wyniczek$pkt_zw] <- 100
+      
+      add_title <- function(vis, ..., x_lab = "x units", title = paste0("Spline z poprawką dla ", names(dane)[i])) 
+      {
+        add_axis(vis, "x", title = x_lab) %>% 
+          add_axis("x", orient = "top", ticks = 0, title = title,
+                   properties = axis_props(
+                     axis = list(stroke = "white"),
+                     labels = list(fontSize = 0)
+                   ), ...)
+      }
+      
+      dane_do_narysowania_wykresu <- data.frame(zm_x = daty[wyniczek$idx_bez_NA], zm_y = y)
+      
+      
+      
+    }
+    
+    
+    
+    
+    tabela_z_punktami_zwrotnymi <- data.frame("Punkty zwrotne" = as.character(daty[wyniczek$idx_bez_NA][wyniczek$pkt_zw]))
+    
+    return(list(dane_do_narysowania_wykresu = dane_do_narysowania_wykresu, czy_pkt_zw_kolor = czy_pkt_zw_kolor, czy_pkt_zw_rozmiar = czy_pkt_zw_rozmiar,
+                tabela_z_punktami_zwrotnymi = tabela_z_punktami_zwrotnymi))
+  }
+  
+  
+  
+  
+}
+
+
+
