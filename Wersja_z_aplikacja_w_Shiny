@@ -1,0 +1,123 @@
+rm(list = ls())
+setwd("W:/Osobiste/Kuba_Z/Moje aplikacje W Shiny/Wyszukiwanie punktów zwrotnych")
+source("Funkcja.R")
+
+
+
+ui <- fluidPage(
+  useShinyjs(),
+  titlePanel("Podane punkty zwrotne"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("file1", "Wybierz plik .xlsx do wczytania.",
+                multiple = TRUE,
+                accept = c("text/xlsx",
+                           "text/comma-separated-values,text/plain",
+                           ".xlsx")),
+      numericInput(inputId = "obs",
+                   label = "Ilość obserwacji, jaką chcesz zobaczyć:",
+                   value = 10),
+      
+      selectInput("algorytm", "Algorytm:",
+                  choices = c("Metoda kątowa", "Spline", "Spline z poprawką"), "Spline z poprawką"),
+      actionButton('wczytaj_plik', 'Wczytaj plik'),
+      
+      hr(),
+      hidden(selectInput("wybierz_nazwe_zmiennej", label = "Wybierz nazwę zmiennej:", choices = c())),
+      
+      hr(),
+      hidden(actionButton('uruchom_algorytm', 'Uruchom algorytm'))
+      
+      
+    
+      
+    ),
+    
+    mainPanel(
+      h4("Dane (od 1-szej do wybranej ilości obserwacji)"),
+      tableOutput("tabela"),
+      tableOutput("tabela_z_punktami_zwrotnymi"),
+      ggvisOutput("p"),
+      uiOutput("p_ui"),
+      plotOutput("plotgraph1")
+    )
+  )
+)
+
+
+
+
+
+server <- function(input, output, session)
+{
+
+  observeEvent(input$wczytaj_plik, {
+  req(input$file1)
+  req(input$algorytm)
+  req(input$obs)    
+    
+  dane <<- read.xlsx(input$file1$datapath)
+  
+  updateSelectInput(session, "wybierz_nazwe_zmiennej", choices = names(dane)[2:ncol(dane)])
+  shinyjs::show('wybierz_nazwe_zmiennej')  
+  dane[, 1] <- as.character(as.Date(dane[, 1], origin = "1899-12-30"))
+  output$tabela <- renderTable(head(dane, input$obs))
+
+  
+  updateActionButton(session, "uruchom_algorytm")
+  shinyjs::show('uruchom_algorytm')
+  })
+  
+  observeEvent(input$uruchom_algorytm, {
+    req(input$file1)
+    req(input$algorytm)
+    
+    
+    
+    
+    updateSelectInput(session, "wybierz_nazwe_zmiennej", choices = names(dane)[2:ncol(dane)])
+    shinyjs::show('wybierz_nazwe_zmiennej')  
+    dane[, 1] <- as.character(as.Date(dane[, 1], origin = "1899-12-30"))  
+    
+  if(input$wybierz_nazwe_zmiennej != "")
+  {
+    datasetInput <- podaj_pkty_zwrotne(dane[, c(names(dane)[1], input$wybierz_nazwe_zmiennej)], input$algorytm)
+    
+    output$tabela_z_punktami_zwrotnymi <- renderTable(datasetInput$tabela_z_punktami_zwrotnymi)
+    
+    add_title <- function(vis, ..., x_lab = "Data", title = paste0(input$algorytm, " dla ", input$wybierz_nazwe_zmiennej)) 
+    {
+      add_axis(vis, "x", title = x_lab) %>% 
+        add_axis("x", orient = "top", ticks = 0, title = title,
+                 properties = axis_props(
+                   axis = list(stroke = "white"),
+                   labels = list(fontSize = 0)
+                 ), ...)
+    }
+    idx_bez_NA <- which(!is.na(datasetInput$dane_do_narysowania_wykresu[, 1]))
+    datasetInput$czy_pkt_zw_kolor <- datasetInput$czy_pkt_zw_kolor[idx_bez_NA]
+    datasetInput$czy_pkt_zw_rozmiar <- datasetInput$czy_pkt_zw_rozmiar[idx_bez_NA]
+    
+    datasetInput$dane_do_narysowania_wykresu <- datasetInput$dane_do_narysowania_wykresu[idx_bez_NA, ]
+    
+    datasetInput$dane_do_narysowania_wykresu %>%
+      ggvis(~zm_x, ~zm_y) %>% layer_lines(stroke := rgb(0, 101, 177, maxColorValue = 255)) %>% layer_points(fill := ~datasetInput$czy_pkt_zw_kolor, size := ~datasetInput$czy_pkt_zw_rozmiar) %>% add_axis("y", title = "y") %>% add_title() %>% scale_datetime("x", nice = "month") %>% bind_shiny("p", "p_ui")
+    
+  }
+  
+  
+  })
+    
+ 
+  
+  
+  
+  
+}
+
+
+
+
+
+shinyApp(ui, server)
