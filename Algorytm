@@ -1,0 +1,460 @@
+rm(list = ls())
+
+library(openxlsx)
+library(ggplot2)
+
+wyzn_pkt_zw_splinem <- function(y)
+{
+  y <- as.double(y)
+  
+  idx_bez_NA <- which(!(is.na(y)))
+  
+  y <- y[idx_bez_NA]
+  
+  spl_y <- smooth.spline(y, df = 30) 
+  
+  diff_spl_y <- diff(spl_y$y, d = 1)
+  
+  pkt_zw <- c()
+  
+  diff_tr <- diff_spl_y
+  
+  for(i in 2:(length(diff_tr) - 1))
+  {
+    if(diff_tr[i - 1] > 0 & diff_tr[i] < 0)
+    {
+      # Sprawdzam, czy na pewno oryginalny szereg czasowy ma w punkcie t ekstremum lokalne. Jesli nie ma, to biore wartosc w t - 1 lub t + 1.
+      nowy_pkt_zw <- which(c(y[i - 1], y[i], y[i + 1]) == max(c(y[i - 1], y[i], y[i + 1]))) + (i - 2)
+      # Gdy dla i = 10, which.min daje nam 2, to powinnismy dostac 10 a nie 2, czyli
+      # przesuwam which.min o (i - 2)
+      
+      # Gdy wszystkie wartosci sa sobie rowne, to biore najpozniejsza.
+      nowy_pkt_zw <- nowy_pkt_zw[length(nowy_pkt_zw)] 
+      
+      pkt_zw <- append(pkt_zw, nowy_pkt_zw)
+    }
+    
+    if(diff_tr[i - 1] < 0 & diff_tr[i] > 0)
+    {
+      # Sprawdzam, czy na pewno oryginalny szereg czasowy ma w punkcie t ekstremum lokalne. Jesli nie ma, to biore wartosc w t - 1 lub t + 1.
+      nowy_pkt_zw <- which(c(y[i - 1], y[i], y[i + 1]) == min(c(y[i - 1], y[i], y[i + 1]))) + (i - 2)
+      # Gdy dla i = 10, which.min daje nam 2, to powinnismy dostac 10 a nie 2, czyli
+      # przesuwam which.min o (i - 2)
+      
+      # Gdy wszystkie wartosci sa sobie rowne, to biore najpozniejsza.
+      nowy_pkt_zw <- nowy_pkt_zw[length(nowy_pkt_zw)] 
+      
+      pkt_zw <- append(pkt_zw, nowy_pkt_zw)
+    }
+  }
+  
+  return(list("spline" = spl_y, "pkt_zw" = pkt_zw, "idx_bez_NA" = idx_bez_NA))
+}
+
+
+
+
+
+
+
+metoda_katowa <- function(y)
+{
+  y <- as.double(y)
+  
+  idx_bez_NA <- which(!(is.na(y)))
+  
+  y <- y[idx_bez_NA]
+  
+  x <- 1:length(y)
+  
+  x <- scale(x)
+  
+  if(length(unique(y)) > 1)
+  {
+    y <- scale(y)
+  }
+  
+  katy_w_rad <- rep(NA, length(x) - 2)
+  
+  for(i in 3:length(x))
+  {
+    cosinus <- ((x[i - 1] - x[i - 2]) * (x[i] - x[i - 1]) + (y[i - 1] - y[i - 2]) * (y[i] - y[i - 1])) / (sqrt((x[i - 1] - x[i - 2])^2 + (y[i - 1] - y[i - 2])^2) * sqrt((x[i] - x[i - 1])^2 + (y[i] - y[i - 1])^2))
+    
+    if(cosinus > 1)
+    {
+      cosinus <- 1
+    }
+    
+    if(cosinus < -1)
+    {
+      cosinus <- -1
+    }
+    
+    katy_w_rad[i - 2] <- acos(cosinus)
+  }
+  
+  
+  
+  x_pkt_zw <- c()
+  
+  for(i in 1:length(katy_w_rad))
+  {
+    if(katy_w_rad[i] >= pi/5)
+    {
+      x_pkt_zw <- append(x_pkt_zw, i + 1)
+    }
+  }
+  
+  return(list("pkt_zw" = x_pkt_zw, "idx_bez_NA" = idx_bez_NA))
+}
+
+
+
+
+wyzn_pkt_zw_splinem_z_poprawka <- function(y, odl_pkt)
+{
+  y <- as.double(y)
+  
+  idx_bez_NA <- which(!(is.na(y)))
+  
+  y <- y[idx_bez_NA]
+  
+  spl_y <- smooth.spline(y, df = 30)
+  
+  diff_spl_y <- diff(spl_y$y, d = 1)
+  
+  pkt_zw <- c()
+  
+  diff_tr <- diff_spl_y
+  
+  bliskosc <- 0
+  
+  odleglosc <- 0
+  
+  for(i in 2:(length(diff_tr) - 1))
+  {
+    if(length(pkt_zw) > 0)
+    {
+      odleglosc <- odleglosc + 1
+    }
+    if(odleglosc > odl_pkt)
+    {
+      bliskosc <- 0
+    }
+    if(diff_tr[i - 1] > 0 & diff_tr[i] < 0)
+    {
+      bliskosc <- bliskosc + 1
+      if(odleglosc <= odl_pkt)
+      {
+        if(bliskosc %% 2 == 0)
+        {
+          odleglosc <- 0
+          bliskosc <- 0
+          pkt_zw <- setdiff(pkt_zw, pkt_zw[length(pkt_zw)])
+          next
+        }
+      }
+      odleglosc <- 0
+      # Sprawdzam, czy na pewno oryginalny szereg czasowy ma w punkcie t ekstremum lokalne. Jesli nie ma, to biore wartosc w t - 1 lub t + 1.
+      nowy_pkt_zw <- which(c(y[i - 1], y[i], y[i + 1]) == max(c(y[i - 1], y[i], y[i + 1]))) + (i - 2)
+      # Gdy dla i = 10, which.min daje nam 2, to powinnismy dostac 10 a nie 2, czyli
+      # przesuwam which.min o (i - 2)
+      
+      # Gdy wszystkie wartosci sa sobie rowne, to biore najpozniejsza.
+      nowy_pkt_zw <- nowy_pkt_zw[length(nowy_pkt_zw)] 
+      
+      pkt_zw <- append(pkt_zw, nowy_pkt_zw)
+    }
+    
+    if(diff_tr[i - 1] < 0 & diff_tr[i] > 0)
+    {
+      bliskosc <- bliskosc + 1
+      if(odleglosc <= odl_pkt)
+      {
+        if(bliskosc %% 2 == 0)
+        {
+          odleglosc <- 0
+          bliskosc <- 0
+          
+          
+          pkt_zw <- setdiff(pkt_zw, pkt_zw[length(pkt_zw)])
+          next
+        }
+      }
+      odleglosc <- 0
+      # Sprawdzam, czy na pewno oryginalny szereg czasowy ma w punkcie t ekstremum lokalne. Jesli nie ma, to biore wartosc w t - 1 lub t + 1.
+      nowy_pkt_zw <- which(c(y[i - 1], y[i], y[i + 1]) == min(c(y[i - 1], y[i], y[i + 1]))) + (i - 2)
+      # Gdy dla i = 10, which.min daje nam 2, to powinnismy dostac 10 a nie 2, czyli
+      # przesuwam which.min o (i - 2)
+      
+      # Gdy wszystkie wartosci sa sobie rowne, to biore najpozniejsza.
+      nowy_pkt_zw <- nowy_pkt_zw[length(nowy_pkt_zw)] 
+      
+      pkt_zw <- append(pkt_zw, nowy_pkt_zw)
+    }
+  }
+  
+  return(list("spline" = spl_y, "pkt_zw" = pkt_zw, "idx_bez_NA" = idx_bez_NA))
+}
+
+
+
+
+
+
+podaj_pkty_zwrotne <- function(dane, nazwa_wyniku)
+{
+  daty <- as.Date(dane[,1], origin = "1899-12-30")
+  
+  ramka_danych_met_kat <- matrix(NA, nrow = nrow(dane) + 1, ncol = ncol(dane) - 1)
+  
+  ramka_danych_met_kat[1, ] <- names(dane)[2:ncol(dane)]
+  
+  for(i in 2:ncol(dane))
+  {
+    wyniczek <- metoda_katowa(dane[, i])
+    
+    nowe_daty <- as.character(daty[wyniczek$idx_bez_NA][wyniczek$pkt_zw])
+    
+    if(length(wyniczek$pkt_zw) > 0)
+    {
+      ramka_danych_met_kat[2:(length(wyniczek$pkt_zw) + 1), i - 1] <- nowe_daty
+    }
+    
+    y <- dane[, i]
+    
+    y <- as.double(y)
+    
+    y <- y[which(!(is.na(y)))]
+    
+    czy_pkt_zw_kolor <- rep(rgb(1, 136, 202, maxColorValue = 255), length(y))
+    czy_pkt_zw_kolor[wyniczek$pkt_zw] <- 'red'
+    
+    czy_pkt_zw_rozmiar <- rep(1, length(y))
+    czy_pkt_zw_rozmiar[wyniczek$pkt_zw] <- 5
+    ggsave(
+      paste0("Metoda kątowa dla ", names(dane)[i], ".jpg"),
+           plot = ggplot(data.frame(zm_x = daty[wyniczek$idx_bez_NA], zm_y = y), aes(x = zm_x, y = zm_y)) + 
+        geom_line(color = rgb(1, 136, 202, maxColorValue = 255)) +
+        labs(title=paste0("Metoda kątowa dla ", names(dane)[i]), subtitle = "@mbank_research") + xlab("Data") + ylab(" ") + 
+        geom_point(colour = czy_pkt_zw_kolor, size = czy_pkt_zw_rozmiar) + theme_bw() +
+        theme(
+          axis.line = element_line(color='black'),
+          plot.background = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.grid.major = element_blank()
+        )
+    )       
+    
+  }
+  
+  
+  ramka_danych_met_kat <- data.frame(t(ramka_danych_met_kat))
+  
+  nazwy <- rep("", ncol(ramka_danych_met_kat))
+  
+  nazwy[1] <- "Zmienna"
+  
+  for(i in 2:length(nazwy))
+  {
+    nazwy[i] <- paste0(i - 1, " punkt")
+  }
+  
+  names(ramka_danych_met_kat) <- nazwy
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  ramka_danych <- matrix(NA, nrow = nrow(dane) + 1, ncol = ncol(dane) - 1)
+  
+  ramka_danych[1, ] <- names(dane)[2:ncol(dane)]
+  
+  for(i in 2:ncol(dane))
+  {
+    wyniczek <- wyzn_pkt_zw_splinem(dane[, i])
+    
+    nowe_daty <- as.character(daty[wyniczek$idx_bez_NA][wyniczek$pkt_zw])
+    
+    if(length(wyniczek$pkt_zw) > 0)
+    {
+      ramka_danych[2:(length(wyniczek$pkt_zw) + 1), i - 1] <- nowe_daty
+    }
+    
+    y <- dane[, i]
+    
+    y <- as.double(y)
+    
+    y <- y[which(!(is.na(y)))]
+    
+    czy_pkt_zw_kolor <- rep(rgb(1, 136, 202, maxColorValue = 255), length(y))
+    czy_pkt_zw_kolor[wyniczek$pkt_zw] <- 'red'
+    
+    czy_pkt_zw_rozmiar <- rep(1, length(y))
+    czy_pkt_zw_rozmiar[wyniczek$pkt_zw] <- 5
+    
+    ggsave(
+      paste0("Spline dla ", names(dane)[i], ".jpg"),
+      plot = ggplot(data.frame(zm_x = daty[wyniczek$idx_bez_NA], zm_y = y), aes(x = zm_x, y = zm_y)) +
+        geom_line(color = rgb(1, 136, 202, maxColorValue = 255)) +
+        labs(title=paste0("Spline dla ", names(dane)[i]), subtitle = "@mbank_research") + xlab("Data") + ylab(" ") +
+        geom_point(colour = czy_pkt_zw_kolor, size = czy_pkt_zw_rozmiar) + theme_bw() +
+        theme(
+          axis.line = element_line(color='black'),
+          plot.background = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.grid.major = element_blank()
+        )
+    )
+  }
+  
+  
+  ramka_danych <- data.frame(t(ramka_danych))
+  
+  nazwy <- rep("", ncol(ramka_danych))
+  
+  nazwy[1] <- "Zmienna"
+  
+  for(i in 2:length(nazwy))
+  {
+    nazwy[i] <- paste0(i - 1, " punkt")
+  }
+  
+  names(ramka_danych) <- nazwy
+  
+  ramka_danych_spline <- ramka_danych
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  ramka_danych <- matrix(NA, nrow = nrow(dane) + 1, ncol = ncol(dane) - 1)
+  
+  ramka_danych[1, ] <- names(dane)[2:ncol(dane)]
+  
+  for(i in 2:ncol(dane))
+  {
+    wyniczek <- wyzn_pkt_zw_splinem_z_poprawka(dane[, i], floor(length(dane[, i]) / 25))
+    
+    nowe_daty <- as.character(daty[wyniczek$idx_bez_NA][wyniczek$pkt_zw])
+    
+    if(length(wyniczek$pkt_zw) > 0)
+    {
+      ramka_danych[2:(length(wyniczek$pkt_zw) + 1), i - 1] <- nowe_daty
+    }
+    
+    y <- dane[, i]
+    
+    y <- as.double(y)
+    
+    y <- y[which(!(is.na(y)))]
+    
+    czy_pkt_zw_kolor <- rep(rgb(1, 136, 202, maxColorValue = 255), length(y))
+    czy_pkt_zw_kolor[wyniczek$pkt_zw] <- 'red'
+    
+    czy_pkt_zw_rozmiar <- rep(1, length(y))
+    czy_pkt_zw_rozmiar[wyniczek$pkt_zw] <- 5
+    
+    ggsave(
+      paste0("Spline z poprawką dla ", names(dane)[i], ".jpg"),
+      plot = ggplot(data.frame(zm_x = daty[wyniczek$idx_bez_NA], zm_y = y), aes(x = zm_x, y = zm_y)) + 
+        geom_line(color = rgb(1, 136, 202, maxColorValue = 255)) + 
+        labs(title=paste0("Spline z poprawką dla ", names(dane)[i]), subtitle = "@mbank_research") + xlab("Data") + ylab(" ") +
+        geom_point(colour = czy_pkt_zw_kolor, size = czy_pkt_zw_rozmiar) + theme_bw() +
+        theme(
+          axis.line = element_line(color='black'),
+              plot.background = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.grid.major = element_blank()
+        )
+    )
+  }
+  
+  
+  ramka_danych <- data.frame(t(ramka_danych))
+  
+  nazwy <- rep("", ncol(ramka_danych))
+  
+  nazwy[1] <- "Zmienna"
+  
+  for(i in 2:length(nazwy))
+  {
+    nazwy[i] <- paste0(i - 1, " punkt")
+  }
+  
+  names(ramka_danych) <- nazwy
+  
+  ramka_danych_spline_z_poprawka <- ramka_danych
+  
+  
+  
+  write.xlsx(list("Metoda kątowa" = ramka_danych_met_kat, "Spline" = ramka_danych_spline, "Spline z poprawką" = ramka_danych_spline_z_poprawka), paste0(getwd(), "/", nazwa_wyniku, ".xlsx"))
+}
+
+
+
+
+
+
+
+
+
+
+
+
+# dane1 <- read.xlsx(paste0(getwd(), "/1 zestaw danych.xlsx"))
+
+# podaj_pkty_zwrotne(dane1, "1 wyniki")
+
+
+
+
+
+# dane2 <- read.xlsx(paste0(getwd(), "/2 zestaw danych.xlsx"))
+
+# podaj_pkty_zwrotne(dane2, "2 wyniki")
+
+
+
+
+# dane3 <- read.xlsx(paste0(getwd(), "/3 zestaw zmiennych.xlsx"))
+
+# podaj_pkty_zwrotne(dane3, "3 wyniki")
+
+
+
+
+
+
+
+
+
+# dane4 <- read.xlsx(paste0(getwd(), "/dane 4.xlsx"))
+
+# podaj_pkty_zwrotne(dane4, "Wyniki dla dane 4")
+
+
+
+
+
+
+# dane5 <- read.xlsx(paste0(getwd(), "/dane 5.xlsx"))
+
+# podaj_pkty_zwrotne(dane5, "Wyniki dla dane 5")
+
+
+
+
+wyniki <- read.xlsx(paste0(getwd(), "/Wyniki.xlsx"))
+
+podaj_pkty_zwrotne(wyniki, "Wyniki dla Wyniki")
